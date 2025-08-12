@@ -15,12 +15,14 @@
       background: rgba(20,20,20,0.88); padding:12px; border-radius:10px; color:#fff;
       font-family: "Segoe UI", Roboto, Arial, sans-serif; min-width:220px;
       box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+      
     }
     #controls h3 { margin:0 0 8px 0; font-size:14px; color:#ffd580; }
     .btn { display:block; width:100%; margin:6px 0; padding:8px 10px; border-radius:6px; border:none; cursor:pointer; font-weight:600; }
     .btn-start { background: linear-gradient(90deg,#2ecc71,#27ae60); color:#012; }
     .btn-cancel { background: linear-gradient(90deg,#e74c3c,#c0392b); color:#fff; }
-    .btn-export { background: linear-gradient(90deg,#ff9800,#f57c00); color:#fff; }
+    .btn-prev { background: linear-gradient(90deg,#fff4e4,#00d0f5); color:#000000; }
+    .btn-export { background: linear-gradient(90deg,#fff4e4,#f57c00); color:#000000; }
     #status { margin-top:8px; font-size:12px; color:#fff; opacity:0.95; }
     #hint { display:block; margin-top:6px; color:#ddd; font-size:11px; }
 
@@ -41,10 +43,23 @@
     <h3>Ecuador 3D — Herramientas</h3>
     <button id="startSelect" class="btn btn-start">Iniciar selección (2 clicks)</button>
     <button id="cancelSelect" class="btn btn-cancel">Cancelar selección</button>
+    <button id="previewSelection" class="btn btn-prev">Vista Previa de Selección</button>
     <button id="export3D" class="btn btn-export">Exportar seleccionado a 3D</button>
+    
     <div id="status">Estado: listo</div>
     <small id="hint">Sugerencia: acércate y selecciona una zona pequeña para mejor detalle.</small>
   </div>
+
+<!-- Caja de confirmación para exportar -->
+<div id="confirmExportBox" style="
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    background:rgba(0,0,0,0.85); padding:20px; border-radius:10px; color:white;
+    display:none; z-index:2000; text-align:center; min-width:250px;">
+  <p>¿Deseas exportar el área seleccionada a 3D?</p>
+  <button id="confirmExportBtn" style="background:#28a745; color:white; padding:6px 12px; border:none; border-radius:5px; cursor:pointer; margin-right:10px;">Confirmar</button>
+  <button id="cancelExportBtn" style="background:#dc3545; color:white; padding:6px 12px; border:none; border-radius:5px; cursor:pointer;">Cancelar</button>
+</div>
+
 
   <div id="previewContainer">
     <div id="previewHeader">
@@ -57,12 +72,10 @@
 <script>
   const API_BASE = "http://127.0.0.1:5000"; // ajustar si el servidor está en otra dirección
   Cesium.Ion.defaultAccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiIzYjdlMWY1NS03YTUwLTQ5YzMtYmFmMS0wMzIwYTg4NTA5ZGQiLCJpZCI6MzMwNDI2LCJpYXQiOjE3NTQ3ODkwODN9.-iv3OiABUa6h8PSKNalIaQVuvgojUGADVHbPd7qO4wo";
-
   let previewViewer = null;
   let previewModelEntity = null;
 
   async function init() {
-    // Crear el viewer principal (con terreno)
     const viewer = new Cesium.Viewer('cesiumContainer', {
       imageryProvider: new Cesium.OpenStreetMapImageryProvider(),
       terrainProvider: await Cesium.createWorldTerrainAsync(),
@@ -75,89 +88,64 @@
 
     const statusDiv = document.getElementById('status');
 
-    // Vista inicial - Ecuador
     viewer.camera.flyTo({
       destination: Cesium.Rectangle.fromDegrees(-92, -5, -74, 2),
       orientation: { heading: Cesium.Math.toRadians(0), pitch: Cesium.Math.toRadians(-45), roll: 0 },
       duration: 1.4
     });
 
-    // Cargar GeoJSON de provincias robustamente y dibujar contornos mediante polylines
+    // Cargar GeoJSON
     const geojsonUrl = `${API_BASE}/data/geoBoundaries-ECU-ADM2_simplified.geojson`;
-    Cesium.GeoJsonDataSource.load(geojsonUrl, { clampToGround: true })
-      .then(ds => {
-        viewer.dataSources.add(ds);
+  Cesium.GeoJsonDataSource.load(geojsonUrl, { clampToGround: true })
+    .then(ds => {
+      viewer.dataSources.add(ds);
+      ds.entities.values.forEach(entity => {
+        if (entity.polygon) {
+          entity.polygon.material = Cesium.Color.TRANSPARENT;
+          entity.polygon.outline = false;
+        }
+      });
+      statusDiv.innerText = "Estado: GeoJSON cargado";
 
-        // Para evitar tocar propiedades internas inválidas, generamos polylines desde el geojson
-        ds.entities.values.forEach(entity => {
-          // hacemos fill transparente para polígonos
-          if (entity.polygon) {
-            entity.polygon.material = Cesium.Color.TRANSPARENT;
-            entity.polygon.outline = false;
-          }
-          // si hay polyline en GeoJSON, lo estilizamos
-          if (entity.polyline) {
-            try {
-              entity.polyline.width = 2;
-              entity.polyline.material = Cesium.Color.BLACK;
-              entity.polyline.distanceDisplayCondition = new Cesium.DistanceDisplayCondition(0.0, 1.0e7);
-            } catch(e) { /* silenciar si no aplica */ }
-          }
-        });
-
-        // Además: crear polyline explícita para los polígonos (si la geojson no crea una)
-        // NOTA: esto consume algo más de tiempo; si tu geojson ya trae límites, puedes comentar esta parte.
-        ds.entities.values.forEach(entity => {
-          if (entity.polygon && entity.polygon.hierarchy) {
-            const h = entity.polygon.hierarchy.getValue(Cesium.JulianDate.now());
-            if (h && h.positions) {
-              const pts = h.positions.map(p => {
-                const c = Cesium.Cartographic.fromCartesian(p);
-                return [Cesium.Math.toDegrees(c.longitude), Cesium.Math.toDegrees(c.latitude)];
+      // Extra: dibujar contorno para polígonos que no tienen polyline
+      ds.entities.values.forEach(entity => {
+        if (entity.polygon && entity.polygon.hierarchy) {
+          const h = entity.polygon.hierarchy.getValue(Cesium.JulianDate.now());
+          if (h && h.positions) {
+            const arr = [];
+            h.positions.forEach(p => {
+              const c = Cesium.Cartographic.fromCartesian(p);
+              arr.push(Cesium.Math.toDegrees(c.longitude), Cesium.Math.toDegrees(c.latitude));
+            });
+            if (arr.length > 2) {
+              viewer.entities.add({
+                polyline: { positions: Cesium.Cartesian3.fromDegreesArray(arr), width: 2, material: Cesium.Color.BLACK, clampToGround: true }
               });
-              // aplanar array de lon/lat
-              const arr = [];
-              pts.forEach(p => { arr.push(p[0], p[1]); });
-              if (arr.length > 2) {
-                viewer.entities.add({
-                  polyline: { positions: Cesium.Cartesian3.fromDegreesArray(arr), width: 2, material: Cesium.Color.BLACK, clampToGround: true }
-                });
-              }
             }
           }
-        });
-
-        statusDiv.innerText = "Estado: GeoJSON cargado (divisiones visibles)";
-      })
-      .catch(err => {
-        console.error("Error cargando GeoJSON:", err);
-        statusDiv.innerText = "Estado: fallo cargando GeoJSON (ver consola)";
+        }
       });
+    })
+    .catch(err => console.error("Error cargando GeoJSON:", err));
 
-    // --- SELECCIÓN: dos clicks usando pickPosition + fallback pickEllipsoid ---
+    // --- Selección en tiempo real ---
     let selecting = false;
     let first = null;
     let rectEntity = null;
 
-    function addSelectionRectangle(minLon, minLat, maxLon, maxLat) {
-      if (rectEntity) viewer.entities.remove(rectEntity);
-      // animación de alpha usando CallbackProperty
-      const start = Date.now();
-      const material = new Cesium.CallbackProperty(() => {
-        const a = 0.22 + 0.18 * Math.sin((Date.now() - start) / 300.0);
-        return Cesium.Color.ORANGE.withAlpha(Math.max(0.08, Math.min(0.4, a)));
-      }, false);
-
-      rectEntity = viewer.entities.add({
-        rectangle: {
-          coordinates: Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat),
-          material: material,
-          outline: true,
-          outlineColor: Cesium.Color.RED,
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
-        }
-      });
-      return rectEntity;
+    function updateSelectionRectangle(minLon, minLat, maxLon, maxLat) {
+      if (!rectEntity) {
+        rectEntity = viewer.entities.add({
+          rectangle: {
+            coordinates: Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat),
+            material: Cesium.Color.ORANGE.withAlpha(0.25),
+            outline: true,
+            outlineColor: Cesium.Color.RED
+          }
+        });
+      } else {
+        rectEntity.rectangle.coordinates = Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat);
+      }
     }
 
     document.getElementById('startSelect').onclick = () => {
@@ -165,6 +153,7 @@
       if (rectEntity) { viewer.entities.remove(rectEntity); rectEntity = null; }
       statusDiv.innerText = "Modo selección activo: haz 2 clicks";
     };
+
     document.getElementById('cancelSelect').onclick = () => {
       selecting = false; first = null;
       if (rectEntity) { viewer.entities.remove(rectEntity); rectEntity = null; }
@@ -172,130 +161,231 @@
     };
 
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+    // Primer y segundo click
     handler.setInputAction(function(click) {
       if (!selecting) return;
-
-      // preferimos pickPosition para obtener la posición real sobre el terreno
-      let cartesian = viewer.scene.pickPosition(click.position);
-      if (!cartesian || Cesium.defined(cartesian) === false) {
-        cartesian = viewer.scene.camera.pickEllipsoid(click.position, viewer.scene.globe.ellipsoid);
-      }
-      if (!cartesian) {
-        statusDiv.innerText = "Click inválido (fuera del globo/terreno).";
-        return;
-      }
-
+      let cartesian = viewer.scene.pickPosition(click.position) ||
+                      viewer.scene.camera.pickEllipsoid(click.position, viewer.scene.globe.ellipsoid);
+      if (!cartesian) return;
       const carto = Cesium.Cartographic.fromCartesian(cartesian);
       const lon = Cesium.Math.toDegrees(carto.longitude);
       const lat = Cesium.Math.toDegrees(carto.latitude);
 
       if (!first) {
         first = { lon, lat };
-        statusDiv.innerText = "Primera esquina guardada. Haz el segundo click.";
       } else {
-        const minLon = Math.min(first.lon, lon), maxLon = Math.max(first.lon, lon);
-        const minLat = Math.min(first.lat, lat), maxLat = Math.max(first.lat, lat);
-        addSelectionRectangle(minLon, minLat, maxLon, maxLat);
         selecting = false;
-        statusDiv.innerText = `Seleccionado: ${minLon.toFixed(4)},${minLat.toFixed(4)} → ${maxLon.toFixed(4)},${maxLat.toFixed(4)}`;
-        viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(minLon, minLat, maxLon, maxLat), orientation: { pitch: Cesium.Math.toRadians(-55) }, duration: 1.0 });
+        statusDiv.innerText = `Área final: (${first.lon.toFixed(4)}, ${first.lat.toFixed(4)}) → (${lon.toFixed(4)}, ${lat.toFixed(4)})`;
       }
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
-    // --- EXPORTAR + PREVIEW ---
-    document.getElementById('export3D').onclick = async () => {
-      if (!rectEntity) { statusDiv.innerText = "No hay selección"; return; }
-      const rect = rectEntity.rectangle.coordinates.getValue();
-      const sw = Cesium.Rectangle.southwest(rect), ne = Cesium.Rectangle.northeast(rect);
-      const minLon = Cesium.Math.toDegrees(sw.longitude), minLat = Cesium.Math.toDegrees(sw.latitude);
-      const maxLon = Cesium.Math.toDegrees(ne.longitude), maxLat = Cesium.Math.toDegrees(ne.latitude);
+    // Movimiento del ratón para actualizar rectángulo
+    handler.setInputAction(function(movement) {
+      if (!selecting || !first) return;
+      let cartesian = viewer.scene.pickPosition(movement.endPosition) ||
+                      viewer.scene.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+      if (!cartesian) return;
+      const carto = Cesium.Cartographic.fromCartesian(cartesian);
+      const lon = Cesium.Math.toDegrees(carto.longitude);
+      const lat = Cesium.Math.toDegrees(carto.latitude);
+      const minLon = Math.min(first.lon, lon);
+      const maxLon = Math.max(first.lon, lon);
+      const minLat = Math.min(first.lat, lat);
+      const maxLat = Math.max(first.lat, lat);
+      updateSelectionRectangle(minLon, minLat, maxLon, maxLat);
+    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
-      const polygonFeature = {
-        type: "Feature",
-        properties: {},
-        geometry: {
-          type: "Polygon",
-          coordinates: [[
-            [minLon, minLat],
-            [minLon, maxLat],
-            [maxLon, maxLat],
-            [maxLon, minLat],
-            [minLon, minLat]
-          ]]
-        }
-      };
+    // --- Exportar y mostrar preview ---
+    // --- Botón de exportar ---
+document.getElementById('export3D').onclick = () => {
+  if (!rectEntity) { 
+    statusDiv.innerText = "No hay selección"; 
+    return; 
+  }
+  const rect = rectEntity.rectangle.coordinates.getValue();
+  const sw = Cesium.Rectangle.southwest(rect), ne = Cesium.Rectangle.northeast(rect);
+  window._exportMinLon = Cesium.Math.toDegrees(sw.longitude);
+  window._exportMinLat = Cesium.Math.toDegrees(sw.latitude);
+  window._exportMaxLon = Cesium.Math.toDegrees(ne.longitude);
+  window._exportMaxLat = Cesium.Math.toDegrees(ne.latitude);
 
-      statusDiv.innerText = "Enviando selección al servidor...";
-      try {
-        const res = await fetch(`${API_BASE}/api/clip`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ geometry: polygonFeature.geometry })
-        });
+  // Mostrar cuadro de confirmación
+  document.getElementById('confirmExportBox').style.display = 'block';
+};
 
-        const payload = await res.json();
-        if (res.status === 200 || res.status === 202) {
-          if (payload.glb_url) {
-            statusDiv.innerText = "Modelo generado — cargando vista previa...";
-            await showPreviewGLB(payload.glb_url, (minLon + maxLon) / 2, (minLat + maxLat) / 2);
-          } else if (payload.job_id) {
-            statusDiv.innerText = `Trabajo encolado (job ${payload.job_id}). Esperando resultado...`;
-            await pollStatusAndShow(payload.job_id, (minLon + maxLon) / 2, (minLat + maxLat) / 2);
-          } else if (payload.inter_geojson) {
-            Cesium.GeoJsonDataSource.load(payload.inter_geojson, { clampToGround: true }).then(ds => viewer.dataSources.add(ds));
-            statusDiv.innerText = "Intersección añadida al mapa.";
-          } else {
-            statusDiv.innerText = "Respuesta no contiene resultados esperados. Ver consola.";
-            console.log("payload:", payload);
-          }
-        } else {
-          statusDiv.innerText = `Error servidor: ${payload.error || JSON.stringify(payload)}`;
-        }
-      } catch (err) {
-        console.error("Error fetch /api/clip:", err);
-        statusDiv.innerText = "Error enviando selección (ver consola).";
+// --- Confirmar exportación ---
+document.getElementById('confirmExportBtn').onclick = async () => {
+    document.getElementById('confirmExportBox').style.display = 'none';
+
+    const polygonFeature = {
+      type: "Feature",
+      properties: {},
+      geometry: {
+        type: "Polygon",
+        coordinates: [[
+          [window._exportMinLon, window._exportMinLat],
+          [window._exportMinLon, window._exportMaxLat],
+          [window._exportMaxLon, window._exportMaxLat],
+          [window._exportMaxLon, window._exportMinLat],
+          [window._exportMinLon, window._exportMinLat]
+        ]]
       }
     };
 
-    async function pollStatusAndShow(jobId, centerLon, centerLat) {
-      const url = `${API_BASE}/api/status/${jobId}`;
-      for (let i=0;i<90;i++){
-        try {
-          const r = await fetch(url);
-          const j = await r.json();
-          if (r.status === 200) {
-            if (j.status === "done" && j.glb_url) {
-              await showPreviewGLB(j.glb_url, centerLon, centerLat);
-              return;
-            } else if (j.status === "error") {
-              statusDiv.innerText = "Error en procesamiento: " + (j.message || "");
-              return;
-            } else {
-              statusDiv.innerText = `Procesando... intento ${i+1}`;
-            }
-          } else {
-            statusDiv.innerText = `Estado job: ${r.status}`;
-          }
-        } catch(e) {
-          console.error("poll error:", e);
-        }
-        await new Promise(res => setTimeout(res, 2000));
-      }
-      statusDiv.innerText = "Tiempo de espera agotado.";
-    }
+    statusDiv.innerText = "Enviando selección al servidor...";
+    try {
+      const res = await fetch(`${API_BASE}/api/clip`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ geometry: polygonFeature.geometry })
+      });
 
-    // Mostrar GLB en preview
+      const payload = await res.json();
+      if (payload.glb_url) {
+        statusDiv.innerText = "Modelo generado correctamente.";
+        // Guardamos URL del modelo para vista previa manual
+        window._lastGeneratedModel = {
+          url: payload.glb_url,
+          centerLon: (window._exportMinLon + window._exportMaxLon) / 2,
+          centerLat: (window._exportMinLat + window._exportMaxLat) / 2
+        };
+
+        // Crear botón para vista previa
+        const previewBtn = document.createElement('button');
+        previewBtn.textContent = "Ver Vista Previa";
+        previewBtn.className = "btn btn-start";
+        previewBtn.onclick = () => {
+          showPreviewGLB(
+            window._lastGeneratedModel.url, 
+            window._lastGeneratedModel.centerLon, 
+            window._lastGeneratedModel.centerLat
+          );
+        };
+        statusDiv.appendChild(document.createElement("br"));
+        statusDiv.appendChild(previewBtn);
+      }
+    } catch (err) {
+      console.error(err);
+      statusDiv.innerText = "Error enviando selección.";
+    }
+};
+
+  // --- Vista previa sin guardar ---
+document.getElementById('previewSelection').onclick = async () => {
+  if (!rectEntity) {
+    statusDiv.innerText = "No hay selección para previsualizar.";
+    return;
+  }
+
+  const rect = rectEntity.rectangle.coordinates.getValue();
+  const sw = Cesium.Rectangle.southwest(rect), ne = Cesium.Rectangle.northeast(rect);
+  const minLon = Cesium.Math.toDegrees(sw.longitude), minLat = Cesium.Math.toDegrees(sw.latitude);
+  const maxLon = Cesium.Math.toDegrees(ne.longitude), maxLat = Cesium.Math.toDegrees(ne.latitude);
+
+  const polygonFeature = {
+    type: "Feature",
+    properties: {},
+    geometry: {
+      type: "Polygon",
+      coordinates: [[
+        [minLon, minLat],
+        [minLon, maxLat],
+        [maxLon, maxLat],
+        [maxLon, minLat],
+        [minLon, minLat]
+      ]]
+    }
+  };
+
+  statusDiv.innerText = "Generando vista previa...";
+  try {
+    const res = await fetch(`${API_BASE}/api/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ geometry: polygonFeature.geometry })
+    });
+
+    const payload = await res.json();
+    if (payload.glb_url) {
+      await showPreviewGLB(payload.glb_url, (minLon + maxLon) / 2, (minLat + maxLat) / 2);
+    } else {
+      statusDiv.innerText = "Error: no se recibió el modelo.";
+    }
+  } catch (err) {
+    console.error(err);
+    statusDiv.innerText = "Error generando vista previa.";
+  }
+};
+
+
+
+  // --- Cancelar exportación ---
+  document.getElementById('cancelExportBtn').onclick = () => {
+    document.getElementById('confirmExportBox').style.display = 'none';
+    statusDiv.innerText = "Exportación cancelada.";
+  };
+
+
+
+
+  document.getElementById('confirmExportBtn').onclick = async () => {
+  document.getElementById('confirmExportBox').style.display = 'none';
+  
+  const polygonFeature = {
+    type: "Feature",
+    properties: {},
+    geometry: {
+      type: "Polygon",
+      coordinates: [[
+        [window._exportMinLon, window._exportMinLat],
+        [window._exportMinLon, window._exportMaxLat],
+        [window._exportMaxLon, window._exportMaxLat],
+        [window._exportMaxLon, window._exportMinLat],
+        [window._exportMinLon, window._exportMinLat]
+      ]]
+    }
+  };
+
+  statusDiv.innerText = "Enviando selección al servidor...";
+  try {
+    const res = await fetch(`${API_BASE}/api/clip`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ geometry: polygonFeature.geometry })
+    });
+
+    const payload = await res.json();
+    if (payload.glb_url) {
+      statusDiv.innerText = "Modelo generado — cargando vista previa...";
+      await showPreviewGLB(payload.glb_url, 
+        (window._exportMinLon + window._exportMaxLon) / 2, 
+        (window._exportMinLat + window._exportMaxLat) / 2);
+    }
+  } catch (err) {
+    console.error(err);
+    statusDiv.innerText = "Error enviando selección.";
+  }
+};
+
+document.getElementById('cancelExportBtn').onclick = () => {
+  document.getElementById('confirmExportBox').style.display = 'none';
+  statusDiv.innerText = "Exportación cancelada.";
+};
+
+
     async function showPreviewGLB(glbUrl, lonCenter, latCenter) {
       const previewContainer = document.getElementById('previewContainer');
       previewContainer.style.display = 'block';
 
       if (!previewViewer) {
         previewViewer = new Cesium.Viewer('preview3D', {
-          imageryProvider: new Cesium.OpenStreetMapImageryProvider(),
-          terrainProvider: await Cesium.createWorldTerrainAsync(),
-          baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false, timeline: false, animation: false
+          imageryProvider: false,
+          baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false,
+          timeline: false, animation: false, skyBox: false, skyAtmosphere: false
         });
-        previewViewer.scene.globe.depthTestAgainstTerrain = true;
+        previewViewer.scene.globe.show = false;
+        previewViewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#1a1a1a");
       } else {
         previewViewer.entities.removeAll();
       }
@@ -304,21 +394,30 @@
       previewModelEntity = previewViewer.entities.add({
         name: "Preview GLB",
         position: pos,
-        model: { uri: glbUrl, scale: 1.0, minimumPixelSize: 64 }
+        model: {
+          uri: glbUrl,
+          scale: 1.0,
+          minimumPixelSize: 128,
+          maximumScale: 5000,
+          runAnimations: false
+        }
       });
 
       try {
         await previewModelEntity.model.readyPromise;
-        await previewViewer.zoomTo(previewViewer.entities);
+        previewViewer.zoomTo(previewModelEntity);
         statusDiv.innerText = "Previsualización cargada.";
+
+        // Botón para abrir en pantalla completa
+        const fullBtn = document.createElement('button');
+        fullBtn.textContent = "Ver en pantalla completa";
+        fullBtn.className = "btn btn-start";
+        fullBtn.onclick = () => window.open(`viewer.html?model=${encodeURIComponent(glbUrl)}`, "_blank");
+        statusDiv.appendChild(document.createElement("br"));
+        statusDiv.appendChild(fullBtn);
       } catch (err) {
-        console.error("Error cargando GLB en preview:", err);
-        statusDiv.innerText = "Error cargando modelo 3D (ver consola).";
-        // añadir link para diagnóstico
-        const link = document.createElement('a');
-        link.href = glbUrl; link.target = "_blank"; link.textContent = "Abrir GLB en nueva pestaña";
-        statusDiv.appendChild(document.createElement('br'));
-        statusDiv.appendChild(link);
+        console.error(err);
+        statusDiv.innerText = "Error cargando modelo 3D.";
       }
     }
 
@@ -326,13 +425,24 @@
       document.getElementById('previewContainer').style.display = 'none';
       if (previewViewer) previewViewer.entities.removeAll();
     };
+  }
 
-  } // init()
 
-  init().catch(err => {
-    console.error("Init error:", err);
-    document.getElementById('status').innerText = "Error inicializando visor (ver consola).";
-  });
+
+  
+  init();
 </script>
+
+<!-- Confirmación de exportación -->
+<div id="confirmExportBox" style="
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  background:rgba(0,0,0,0.85); padding:20px; border-radius:10px; color:white;
+  display:none; z-index:2000; text-align:center; min-width:250px;">
+  <p>¿Deseas exportar el área seleccionada a 3D?</p>
+  <button id="confirmExportBtn" style="background:#28a745; color:white; padding:6px 12px; border:none; border-radius:5px; cursor:pointer; margin-right:10px;">Confirmar</button>
+  <button id="cancelExportBtn" style="background:#dc3545; color:white; padding:6px 12px; border:none; border-radius:5px; cursor:pointer;">Cancelar</button>
+</div>
+
+
 </body>
 </html>

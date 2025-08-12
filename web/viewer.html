@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Visor 3D Completo</title>
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.132/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.132/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+  <style>
+    html, body, #cesiumContainer { width:100%; height:100%; margin:0; padding:0; overflow:hidden; background:#111; }
+    #topbar { position:absolute; top:8px; left:8px; z-index:999; color:#fff; font-family:Arial, sans-serif; }
+    #closeBtn { background:rgba(255,255,255,0.08); color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <div id="topbar"><button id="closeBtn">Cerrar</button></div>
+  <div id="cesiumContainer"></div>
+
+  <script>
+    Cesium.Ion.defaultAccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiIzYjdlMWY1NS03YTUwLTQ5YzMtYmFmMS0wMzIwYTg4NTA5ZGQiLCJpZCI6MzMwNDI2LCJpYXQiOjE3NTQ3ODkwODN9.-iv3OiABUa6h8PSKNalIaQVuvgojUGADVHbPd7qO4wo";
+  
+    const params = new URLSearchParams(window.location.search);
+    const modelUrl = params.get("model");
+    if (!modelUrl) {
+      alert("No se especificó URL del modelo. Use viewer.html?model=<URL_DEL_GLB>");
+      throw new Error("No model URL");
+    }
+
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      imageryProvider: false,
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: true,
+      sceneModePicker: false,
+      timeline: false,
+      animation: false,
+      skyBox: false,
+      skyAtmosphere: false
+    });
+
+    viewer.scene.globe.show = false;
+    viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#111111");
+
+    // Añadir el modelo y centrar
+    const entity = viewer.entities.add({
+      name: "Modelo 3D",
+      position: Cesium.Cartesian3.fromDegrees(0, 0, 0),
+      model: {
+        uri: modelUrl,
+        scale: 1.0,
+        minimumPixelSize: 128,
+        maximumScale: 5000
+      }
+    });
+
+    entity.model.readyPromise.then(() => {
+      viewer.zoomTo(entity);
+    }).otherwise((err) => {
+      console.error("Error cargando modelo en viewer:", err);
+      alert("No se pudo cargar el modelo (ver consola).");
+    });
+
+    document.getElementById('closeBtn').onclick = () => {
+      window.close();
+    };
+  </script>
+</body>
+</html>
