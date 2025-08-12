@@ -19,45 +19,27 @@ Está construido con **Flask**, **CesiumJS**, **GeoPandas**, **Rasterio** y util
 ---
 
 ## 📂 Estructura del Proyecto
-
+```bash
 Proyecto/ 
-
 │ 
-
 ├── server.py                   # Servidor Flask principal 
-
 ├── procesar_ecuador.py         # Funciones de suavizado, escalado y generación de malla 
-
 ├── processing.py               # Validaciones de datos y selección 
-
 │ 
-
 ├── data/                       # Archivos de datos y GeoJSON 
-
 │   ├── mosaic.tif              # Mosaico de elevaciones (DEM) 
-
 │   └── geoBoundaries-ECU-ADM2_simplified.geojson 
-
 │ 
-
 ├── hgt_files/                  # Archivos HGT descargados 
-
 ├── outputs/                    # Modelos generados 
-
 │ 
-
 ├── web/                        # Interfaz web 
-
 │   ├── index.html              # Visor y controles 
-
 │   ├── viewer.html             # Visor a pantalla completa del modelo 
-
 │   └── widgets.css             # Estilos Cesium 
-
 │ 
-
 └── README.md                   # Este archivo
-
+```
 ---
 
 ## ⚙ Requisitos
@@ -78,20 +60,8 @@ git clone https://github.com/tuusuario/ecuador-3d.git
 cd ecuador-3d
 ```
 
-2. Colocar datos
 
-- En data/ agregar:
-
-  - mosaic.tif → Mosaico DEM de Ecuador.
-
-  - geoBoundaries-ECU-ADM2_simplified.geojson → Frontera de Ecuador.
-
-
-- En hgt_files/ agregar los .hgt necesarios.
-
-
-
-3. Ejecutar el servidor
+2. Ejecutar el servidor
 ```
 python server.py
 ```
@@ -123,7 +93,7 @@ http://127.0.0.1:5000
 
 📷 Capturas de Pantalla
 
-
+![Imagen del proyecto](/assets/capture01.png)
 
 
 ---
@@ -137,6 +107,5 @@ http://127.0.0.1:5000
 - Procesamiento GIS: GeoPandas, Shapely, Rasterio.
 
 - Generación de modelos: Trimesh, Numpy.
-
 
 ---
